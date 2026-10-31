@@ -15,7 +15,10 @@ This README is the landing page and the **specification of the interface** (mast
 own README with everything that is specific to the family: the instances of the device, their settings and the status of
 the implementation.
 
-> **Status: design.** No implementation exists yet, the interface below is a proposal. Stories and branches follow.
+> **Status: STM32H5 implemented (branch `Dev/STM32H5`).** The master README below stays the specification for every
+> family. Unit tests (host, Unity + CMock + RegMem) are built and run on all 12 STM32H5 lines; integration tests are
+> compiled for the target but were not run on hardware (no board access). See `Bsp/Mcal/Eth/README.md` on the
+> `Dev/STM32H5` branch for the deviations from this specification and the exact scope implemented.
 
 ---
 
@@ -80,15 +83,15 @@ master.
 
 | Family | Branch | Ethernet | Status |
 |---|---|---|---|
-| STM32H5 | `Dev/STM32H5` | `ETH` on STM32H563, H573, H543, H553 and the H5E / H5F lines: MII and RMII, 10 / 100 Mbit/s, IEEE 802.3 and 1588-2008, energy-efficient Ethernet, the transmit and receive queues of the MAC traffic layer, VLAN, checksum offload, RMON counters, TrustZone | planned (first) |
+| STM32H5 | `Dev/STM32H5` | `ETH` on STM32H543, H553, H563, H573 and the H5E / H5F lines (not on H503, H523, H533, H562): RMII only, 10 / 100 Mbit/s, the MDIO bus, the single transmit / receive queue of the MAC traffic layer, the address filters (perfect, hash, promiscuous), the IPv4/TCP/UDP/ICMP checksum offload, VLAN tag filter and insertion, pause-frame flow control, a subset of the RMON (MMC) counters, the PTP system time / frequency / offset adjustment and the PPS output, the magic-packet wake-on-LAN and the MAC-side energy-efficient Ethernet bit | implemented (0.1.0) |
 | STM32H7 | `Dev/STM32H7` | `ETH` of the H7 lines that have it (the same MAC generation as the H5) | planned |
 | STM32F7 | `Dev/STM32F7` | `ETH` MAC with the descriptor DMA, MII / RMII, PTP | planned |
 | STM32F4 | `Dev/STM32F4` | `ETH` MAC on the F407 / F417 / F427 / F429 / F437 / F439 / F469 / F479 lines | planned |
-| STM32G4, STM32L4, STM32U5, STM32U3 | `Dev/STM32G4` ... | no Ethernet MAC on the device - the module is a stub that returns `ETH_REQUEST_ERROR` | planned |
+| STM32G4, STM32L4, STM32U5, STM32U3 | `Dev/STM32G4` ... | no Ethernet MAC on the device - every function checks the peripheral and returns `ETH_REQUEST_ERROR` | planned |
 
 A function without a meaning in a family stays in the interface, returns `ETH_REQUEST_ERROR` and suppresses the unused
-parameters (for example the second queue on a MAC with one queue, the PTP functions on a device without them, the whole module
-on a device without the MAC).
+parameters (for example the second queue on a MAC with one queue, the PTP functions on a device without them). On a device
+without the MAC every function checks the presence of the peripheral and only returns `ETH_REQUEST_ERROR`.
 
 ---
 
@@ -247,8 +250,10 @@ The module follows the common rules of the MCAL layer, so that it behaves like t
   configuration structure, the same request and the same callbacks (error, half transfer, transfer complete).
 - **Flags and states are enums of the module** (`eth_FunctionState_t`, `eth_FlagState_t`), the limits and the constants are
   named, there are no magic numbers in the interface.
-- **Unsupported functions stay.** A function without a meaning in a family keeps its signature, suppresses the unused
-  parameters and returns `ETH_REQUEST_ERROR`.
+- **Module types.** The members of the public structures and the parameters use types of the module (`eth_DescriptorCnt_t`, `eth_BufferSize_t`, `eth_FrameTag_t`, `eth_PtpSeconds_t`, ...),
+  not `uint8_t` / `uint32_t`; the enumerations and structures are written one item per line, aligned.
+- **Every function stays in the interface.** A function without a meaning in a family, or on a device without the
+  peripheral, keeps its signature, suppresses the unused parameters and returns `ETH_REQUEST_ERROR`.
 - **Documentation.** Every function and type has a Doxygen description, the main header has the `\defgroup`.
 
 ---
