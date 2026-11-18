@@ -15,7 +15,8 @@ This README is the landing page and the **specification of the interface** (mast
 own README with everything that is specific to the family: the instances of the device, their settings and the status of
 the implementation.
 
-> **Status: design.** No implementation exists yet, the interface below is a proposal. Stories and branches follow.
+> **Status: design (master).** This branch (`Dev/STM32H7`) carries the classic STM32H7 implementation, see
+> "STM32H7 implementation status" below. The interface below is the proposal all family branches implement.
 
 ---
 
@@ -81,14 +82,67 @@ master.
 | Family | Branch | Ethernet | Status |
 |---|---|---|---|
 | STM32H5 | `Dev/STM32H5` | `ETH` on STM32H563, H573, H543, H553 and the H5E / H5F lines: MII and RMII, 10 / 100 Mbit/s, IEEE 802.3 and 1588-2008, energy-efficient Ethernet, the transmit and receive queues of the MAC traffic layer, VLAN, checksum offload, RMON counters, TrustZone | planned (first) |
-| STM32H7 | `Dev/STM32H7` | `ETH` of the H7 lines that have it (the same MAC generation as the H5) | planned |
+| STM32H7 (classic) | `Dev/STM32H7` | `ETH` of the classic H7 lines that have it (same MAC generation as H5), RMII only - see "STM32H7 implementation status" below | implemented, not run on hardware |
+| STM32H7R / STM32H7S | - | deferred, needs Ral STM32H7RS merge first - see AB#1858/AB#1860 | out of scope for now |
 | STM32F7 | `Dev/STM32F7` | `ETH` MAC with the descriptor DMA, MII / RMII, PTP | planned |
 | STM32F4 | `Dev/STM32F4` | `ETH` MAC on the F407 / F417 / F427 / F429 / F437 / F439 / F469 / F479 lines | planned |
-| STM32G4, STM32L4, STM32U5, STM32U3 | `Dev/STM32G4` ... | no Ethernet MAC on the device - the module is a stub that returns `ETH_REQUEST_ERROR` | planned |
+| STM32G4, STM32L4, STM32U5, STM32U3 | `Dev/STM32G4` ... | no Ethernet MAC on the device - every function checks the peripheral and returns `ETH_REQUEST_ERROR` | planned |
 
 A function without a meaning in a family stays in the interface, returns `ETH_REQUEST_ERROR` and suppresses the unused
-parameters (for example the second queue on a MAC with one queue, the PTP functions on a device without them, the whole module
-on a device without the MAC).
+parameters (for example the second queue on a MAC with one queue, the PTP functions on a device without them). On a device
+without the MAC every function checks the presence of the peripheral and only returns `ETH_REQUEST_ERROR`.
+
+---
+
+## STM32H7 implementation status (this branch, `Dev/STM32H7`)
+
+Classic STM32H7 only (STM32H7R / STM32H7S explicitly deferred, see above - `Bsp/Ral` of this checkout has no
+STM32H7RS CMSIS headers or presets).
+
+- **Ethernet availability** (18 classic lines): `ETH` exists on H723, H725, H730, H733, H735, H742, H743, H745, H747,
+  H750, H753, H755, H757. It does **not** exist on H7A3xG/I, H7B0xB, H7B3xI (STM32CubeMX database). The CMSIS device
+  headers match this exactly (`ETH` is defined only on the lines with the peripheral), so every public function of
+  `Eth.c` checks the peripheral with `#if defined(ETH)`: on H7A3 / H7B0 / H7B3 it only returns `ETH_REQUEST_ERROR`
+  (`Eth_Task` does nothing, `Eth_Get_ModuleVersion` returns the version) and the pin tables hold only the `*_UNUSED`
+  items. There is no separate source file for the lines without the MAC.
+- **Module types**: the integer members of the public structures and the parameters use types of the module
+  (`eth_DescriptorCnt_t`, `eth_BufferSize_t`, `eth_BufferByte_t`, `eth_BufferCnt_t`, `eth_FrameTag_t`,
+  `eth_PtpSeconds_t`, `eth_PtpNanoseconds_t`, `eth_PtpOffset_t`, `eth_StatisticsCnt_t`, `eth_MulticastHashWord_t`,
+  `eth_MacAddressByte_t`, `eth_DescriptorWord_t`), not `uint32_t` / `uint8_t`. `Eth_Get_TxFreeCount` takes
+  `eth_DescriptorCnt_t *` and `Eth_Set_PtpAdjustOffset` takes `eth_PtpOffset_t` (same width as the `uint32_t` /
+  `int32_t` of the STM32H5 `Eth_Port.h`).
+- **PHY interface**: only `ETH_PHY_RMII` is implemented (same precedent as STM32H5); `Eth_InitMiiGpio` keeps its
+  signature and returns `ETH_REQUEST_ERROR`. The interface is selected through a new `Syscfg` submodule of
+  `Bsp/Mcal/Core` (SYSCFG `PMCR.EPIS_SEL`), not a Sbs module: classic STM32H7 has no Sbs module. The MII/RMII encoding
+  (`0b000` = MII, `0b100` = RMII) is the one of the ST STM32H7 drivers (`LL_SYSCFG_ETH_RMII` =
+  `SYSCFG_PMCR_EPIS_SEL_2`).
+- **Cache maintenance**: unlike STM32H5, **no Cache module exists yet** for classic STM32H7 in this checkout. The
+  module performs no explicit cache maintenance of the descriptors / buffers (no `Cache_Set_CleanRange` /
+  `Cache_Set_InvalidateRange` equivalent calls); the application must place `eth_DescriptorMemory_t` in a
+  non-cacheable AXI SRAM region (MPU) until a Cache module is ported for this family. Descriptors / buffers must be
+  in the AXI SRAM, never the DTCM (the Ethernet DMA cannot reach the DTCM on Cortex-M7).
+- **Flow control**: IEEE 802.3x pause frames (`MACTFCR.TFE` / `MACRFCR.RFE`) are enabled by default in
+  `Eth_ConfigMac` - the register plumbing already existed in `Eth_Reg.c` on STM32H5 but no caller used it there; this
+  is a genuine addition on top of the STM32H5 parity, not present in the master interface as a separate function.
+  Everything else (`Eth_Set_MulticastHash`, `Eth_Set_VlanFilter`, `Eth_Get_Statistics`, `Eth_Set_StatisticsClear`,
+  the PTP time / adjustment / PPS, the wake-on-LAN / energy-efficient Ethernet power controls) matches the STM32H5
+  implementation.
+- **Dual-core lines** (H745/H747/H755/H757, Cortex-M7 + Cortex-M4): the single ETH instance is owned by whichever
+  core's firmware image enables it; the module does not assume the peripheral clock is already enabled by the other
+  core.
+- **Unit tests**: `Tests/UnitTests/Test_Eth.c` (RCC / NVIC / GPIO / SYSCFG mocked by CMock, registers emulated by
+  RegMem), target `UT_Eth` of the `UnitTest` build: 43/43 passing on STM32H743xI, STM32H750xB and STM32H723xG; on
+  STM32H7A3xIQ (no `ETH`) the peripheral check test case passes and the other test cases are ignored (not failed).
+- **Integration tests**: `Tests/IntegrationTests/ItTest_Eth.c` / `ItTarget_Eth.c` - compiled for the target, **not
+  run on hardware** (no board access, no external PHY wired to a single Nucleo board).
+- **Not verified / known gaps**:
+  - A project builds the module once the Bsp link of the family adds it to `Bsp/Mcal/CMakeLists.txt`; the unit tests
+    above ran in a project with the module added to that list. `Eth.c`, `Eth_Reg.c` and the integration test were
+    syntax-checked with `arm-none-eabi-gcc -fsyntax-only -Wall -Wextra` on all 22 classic STM32H7 CMSIS lines.
+  - No errata review was performed (no `EmBi_Platform/Docs/Errata` content for ETH found in this checkout at the
+    time of implementation) - never assume "no errata" from this README.
+  - `Eth_Task`'s PTP timestamp-ready / wake-up (magic packet) callback firing is not unit tested (only the register
+    read of the flags is exercised indirectly by other tests).
 
 ---
 
@@ -247,8 +301,8 @@ The module follows the common rules of the MCAL layer, so that it behaves like t
   configuration structure, the same request and the same callbacks (error, half transfer, transfer complete).
 - **Flags and states are enums of the module** (`eth_FunctionState_t`, `eth_FlagState_t`), the limits and the constants are
   named, there are no magic numbers in the interface.
-- **Unsupported functions stay.** A function without a meaning in a family keeps its signature, suppresses the unused
-  parameters and returns `ETH_REQUEST_ERROR`.
+- **Every function stays in the interface.** A function without a meaning in a family, or on a device without the
+  peripheral, keeps its signature, suppresses the unused parameters and returns `ETH_REQUEST_ERROR`.
 - **Documentation.** Every function and type has a Doxygen description, the main header has the `\defgroup`.
 
 ---
